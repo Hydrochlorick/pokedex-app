@@ -6,6 +6,7 @@
 //
 
 import UIKit
+import Kingfisher
 
 class PokedexViewController: UIViewController {
     
@@ -13,7 +14,8 @@ class PokedexViewController: UIViewController {
     
     let pokeTableView = UITableView()
     
-    var pokeList: [Pokemon] = []
+    private var pokeList: [PokemonData] = []
+    private var nextPage: String?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -23,20 +25,50 @@ class PokedexViewController: UIViewController {
         pokeTableView.delegate = self
         
         setupTableView()
-        fetchPokemon()
-
-
+        fetchPokemonList(withPage: nextPage)
     }
     
-    func fetchPokemon() {
-        //This should make sure our URL is valid
-        guard let url = URL(string: "https://pokeapi.co/api/v2/pokemon/") else {return}
+    func fetchPokemonList(withPage page: String?) {
+        var url: URL!
+        if let pageURL = page {
+            url = URL(string: pageURL)
+        } else {
+            url = URL(string: "https://pokeapi.co/api/v2/pokemon/")
+        }
         
-        // Create URLRequest object
         let request = URLRequest(url: url)
-        
-        defaultSession.dataTask(with: request, completionHandler: {(data, response, error) -> Void in
+        let dataTask = defaultSession.dataTask(with: request, completionHandler: {(data, response, error) -> Void in
+            // Make sure it worked
+            guard error == nil else {
+                print("Error: ", error!)
+                return
+            }
+            guard let data = data else {
+                print("No data received")
+                return
+            }
             
+            let pokeResult = try? JSONDecoder().decode(PokemonResult.self, from: data)
+//            print(pokeResult!)
+            self.nextPage = pokeResult?.next
+            for pokemon in pokeResult!.results {
+                print(pokemon.url)
+                self.fetchPokemonData(withUrl: pokemon.url) { (pokemon) in
+                    self.pokeList.append(pokemon)
+                    DispatchQueue.main.async {
+                        self.pokeTableView.reloadData()
+                    }
+                }
+            }
+        })
+        dataTask.resume()
+    }
+    
+    func fetchPokemonData(withUrl url: String, completion: @escaping(PokemonData) -> ()) {
+        guard let url = URL(string: url) else {return}
+        let request = URLRequest(url: url)
+        let session = URLSession.shared
+        session.dataTask(with: request){ (data,result,error) in
             // Make sure it worked
             guard error == nil else {
                 print("Error: ", error!)
@@ -46,14 +78,18 @@ class PokedexViewController: UIViewController {
                 print("No data received")
                 return
             }
-            
             do {
-                let listFromJSON = try? JSONDecoder().decode([Pokemon].self, from: data!)
-                self.pokeList = listFromJSON!
-                self.pokeTableView.reloadData()
-            } // If this can throw an error why don't we need to catch it??
-        }).resume()
+                let jsonData = try JSONDecoder().decode(PokemonData.self, from: data!)
+                print(jsonData)
+                print("We're here")
+                completion(jsonData)
+            } catch {
+                print(data!)
+                print(error.localizedDescription)
+            }
+        }.resume()
     }
+    
     
     func setupTableView() {
         view.addSubview(pokeTableView)
@@ -76,9 +112,23 @@ extension PokedexViewController: UITableViewDelegate, UITableViewDataSource {
     
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = pokeTableView.dequeueReusableCell(withIdentifier: "cell", for: indexPath) as UITableViewCell
-        cell.textLabel?.text = pokeList[indexPath.row].name
+        let pokemon = pokeList[indexPath.row]
+        cell.textLabel?.text = pokemon.name
+        cell.detailTextLabel?.text = String(pokemon.id)
+        if let image = pokemon.sprites?.frontDefault, let url = URL(string: image) {
+            cell.imageView?.kf.setImage(with: url)
+        }
+
         return cell
     }
     
+    func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
+        return 90
+    }
     
+    func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
+        if indexPath.row + 1 == pokeList.count {
+            fetchPokemonList(withPage: nextPage)
+        }
+    }
 }
